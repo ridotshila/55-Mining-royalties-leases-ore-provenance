@@ -331,11 +331,3 @@ Recommended test scenarios:
 
 ---
 
-If you'd like, I can also:
-
-✅ Generate a **diagram** explaining all datum/redeemer flows
-✅ Produce **example JSON datums & redeemers**
-✅ Create a **front-end API spec** for interacting with this validator
-✅ Generate **Helios / Aiken / JavaScript / TypeScript** versions
-
-Just tell me!
