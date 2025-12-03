@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mining Validator Tutorial</title>
+<style>
+body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; background: #f9f9f9; color: #111; }
+h1, h2, h3, h4 { color: #0b3d91; }
+pre { background: #eee; padding: 10px; overflow-x: auto; }
+code { font-family: monospace; color: #c7254e; }
+table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+th { background: #eee; }
+hr { border: 0; border-top: 1px solid #ccc; margin: 20px 0; }
+</style>
+</head>
+<body>
+
+<h1>🧾 Detailed Tutorial: Understanding and Using <code>Main.hs</code> (Mining Validator)</h1>
+
+<p>This tutorial explains your <code>Main.hs</code> module, which implements a <strong>multi-purpose mining validator</strong> for:</p>
+<ul>
+<li>Royalty distribution</li>
+<li>Lease agreements with rent &amp; collateral</li>
+<li>Ore batch NFT transfer &amp; assay updates</li>
+</ul>
+<p>The validator dynamically handles <strong>three different datums</strong> and <strong>six different actions</strong>, making it highly flexible for mining operations.</p>
+
+<hr>
+
+<h2>📚 Table of Contents</h2>
+<ol>
+<li><a href="#imports-overview">Imports Overview</a></li>
+<li><a href="#data-structures">Data Structures</a></li>
+<li><a href="#core-validator-logic">Core Validator Logic</a></li>
+<li><a href="#helper-functions">Helper Functions</a></li>
+<li><a href="#script-wrapping">Script Wrapping &amp; Compilation</a></li>
+<li><a href="#writing-validator-file">Writing the Validator File</a></li>
+<li><a href="#practical-usage">Practical Usage Example</a></li>
+<li><a href="#testing-strategy">Testing Strategy</a></li>
+<li><a href="#best-practices">Best Practices</a></li>
+<li><a href="#glossary">Glossary of Terms</a></li>
+</ol>
+
+<hr>
+
+<h2 id="imports-overview">1. 📦 Imports Overview</h2>
+<h3>Plutus Ledger Modules</h3>
+<ul>
+<li><strong>Plutus.V2.Ledger.Api</strong> – Provides <code>ScriptContext</code>, <code>TxInfo</code>, <code>POSIXTime</code>, <code>TokenName</code>, <code>CurrencySymbol</code>, etc.</li>
+<li><strong>Plutus.V2.Ledger.Contexts</strong> – Supplies <code>txSignedBy</code> for signature checks.</li>
+<li><strong>Plutus.V1.Ledger.Interval</strong> – Used for validating time intervals via <code>contains</code> and <code>from</code>.</li>
+</ul>
+
+<h3>Serialization &amp; File Output</h3>
+<ul>
+<li><strong>Codec.Serialise</strong> – Serializes the validator</li>
+<li><strong>Cardano.Api / Shelley</strong> – Writes <code>.plutus</code> files</li>
+</ul>
+
+<h3>Other Utilities</h3>
+<ul>
+<li><strong>PlutusTx</strong> – Used to derive on-chain <code>IsData</code> instances</li>
+<li><strong>PlutusTx.Prelude</strong> – Replaces standard Prelude inside on-chain code</li>
+</ul>
+
+<hr>
+
+<h2 id="data-structures">2. 🗃️ Data Structures</h2>
+<p>The validator supports <strong>three different datums</strong>.</p>
+
+<h3>RoyaltyEntry</h3>
+<ul>
+<li><code>reBenef</code> – beneficiary wallet (PubKeyHash)</li>
+<li><code>reBps</code> – share in basis points (0–10000)</li>
+</ul>
+
+<h3>RoyaltySplitter</h3>
+<ul>
+<li><code>rsOperator</code> – authorized settlement signer</li>
+<li><code>rsEntries</code> – list of <code>RoyaltyEntry</code> records</li>
+<li><code>rsPayoutCS</code> / <code>rsPayoutTN</code> – token used for payments</li>
+</ul>
+
+<h3>LeaseDatum</h3>
+<ul>
+<li><code>ldLessor</code>, <code>ldLessee</code> – participants</li>
+<li><code>ldRentAmount</code> – rent per payment</li>
+<li><code>ldCollateralAmt</code> – locked collateral amount</li>
+<li><code>ldCollateralCS</code>, <code>ldCollateralTN</code> – collateral token</li>
+<li><code>ldLeaseEnd</code> – deadline for lease</li>
+</ul>
+
+<h3>OreBatchDatum</h3>
+<ul>
+<li><code>obOwner</code> – owner of NFT</li>
+<li><code>obSource</code> – mine/location</li>
+<li><code>obAssayHash</code> – latest assay or provenance</li>
+<li><code>obNftCS</code>, <code>obNftTN</code> – identity of the ore batch NFT</li>
+</ul>
+
+<h3>Redeemer: MiningAction</h3>
+<ul>
+<li>DistributeRoyalties</li>
+<li>PayRent</li>
+<li>SeizeCollateral</li>
+<li>EndLease</li>
+<li>TransferBatch</li>
+<li>AppendAssay</li>
+</ul>
+
+<hr>
+
+<h2 id="core-validator-logic">3. 🧠 Core Validator Logic</h2>
+<pre><code>mkMiningValidator :: BuiltinData -> BuiltinData -> ScriptContext -> Bool</code></pre>
+
+<h3>Royalty Logic</h3>
+<ul>
+<li>Signed by operator</li>
+<li>Validity range must allow settlementTime</li>
+<li>Sum of BPS ≤ 10000</li>
+<li>All beneficiaries receive correct token amounts</li>
+</ul>
+
+<h3>Lease Logic</h3>
+<ul>
+<li>PayRent – Signed by lessee, timestamp valid, paid amount ≥ rent, lessor receives rent</li>
+<li>SeizeCollateral – Signed by lessor, lease ended, collateral paid to lessor</li>
+<li>EndLease – Signed by lessor or lessee, timestamp valid</li>
+</ul>
+
+<h3>Ore Batch NFT Logic</h3>
+<ul>
+<li>TransferBatch – Signed by owner, NFT appears in outputs</li>
+<li>AppendAssay – Signed by owner, new assay non-empty</li>
+</ul>
+
+<hr>
+
+<h2 id="helper-functions">4. 🔢 Helper Functions</h2>
+<ul>
+<li><code>pubKeyHashAddress</code> – Constructs a Plutus address</li>
+<li><code>valuePaidTo</code> – Gets amount of a token paid to PubKeyHash</li>
+<li><code>nowInRange</code> – Checks transaction time range</li>
+<li><code>sumBps</code> – Totals royalty basis points</li>
+<li><code>shareOf</code> – Calculates beneficiary share</li>
+<li><code>allPaid</code> – Verifies all royalty payments</li>
+<li><code>nftPresentInOutputs</code> – Ensures NFT exists in outputs</li>
+</ul>
+
+<hr>
+
+<h2 id="script-wrapping">5. ⚙️ Script Wrapping &amp; Compilation</h2>
+<p>Expose the script as:</p>
+<pre><code>BuiltinData -> BuiltinData -> BuiltinData -> ()</code></pre>
+
+<p>Via:</p>
+<pre><code>wrapped :: BuiltinData -> BuiltinData -> BuiltinData -> ()
+validator :: Validator
+validator = mkValidatorScript $$(PlutusTx.compile [|| wrapped ||])</code></pre>
+
+<hr>
+
+<h2 id="writing-validator-file">6. 💾 Writing the Validator File</h2>
+<p>Output file:</p>
+<pre><code>mining-validator.plutus</code></pre>
+
+<p>Function:</p>
+<pre><code>saveValidator :: IO ()</code></pre>
+
+<ul>
+<li>Serializes validator</li>
+<li>Converts to <code>PlutusScriptV2</code> format</li>
+<li>Writes to disk</li>
+</ul>
+
+<hr>
+
+<h2 id="practical-usage">7. 🧪 Practical Usage Example</h2>
+<pre><code>-- Compile and save the validator
+main
+
+-- Or manually
+saveValidator
+
+-- Output:
+Mining validator written to: mining-validator.plutus
+</code></pre>
+
+<hr>
+
+<h2 id="testing-strategy">8. 🧷 Testing Strategy</h2>
+
+<h3>Royalty tests</h3>
+<ul>
+<li>Correct operator signature</li>
+<li>Incorrect BPS sum</li>
+<li>Missing beneficiary payment</li>
+<li>Wrong payout token</li>
+</ul>
+
+<h3>Lease tests</h3>
+<ul>
+<li>Valid and invalid rent payments</li>
+<li>Early/late collateral seizure</li>
+<li>End lease signature combinations</li>
+</ul>
+
+<h3>Ore Batch tests</h3>
+<ul>
+<li>NFT missing from outputs</li>
+<li>Invalid owner signatures</li>
+<li>Empty assay hash submissions</li>
+</ul>
+
+<hr>
+
+<h2 id="best-practices">9. ✅ Best Practices</h2>
+<ul>
+<li>Ensure datums are formed correctly before submission</li>
+<li>Verify required signatures</li>
+<li>Test every branch separately</li>
+<li>Provide clear trace messages</li>
+<li>Validate token-specific logic with real transactions</li>
+</ul>
+
+<hr>
+
+<h2 id="glossary">10. 📘 Glossary of Terms</h2>
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td>BPS</td><td>Basis points (1/100 of 1%)</td></tr>
+<tr><td>Lease</td><td>Agreement with rent and collateral</td></tr>
+<tr><td>Collateral</td><td>Locked asset guaranteeing performance</td></tr>
+<tr><td>Assay</td><td>Verification / evaluation of ore batch contents</td></tr>
+<tr><td>NFT</td><td>Non-fungible token identifying an ore batch</td></tr>
+<tr><td>BuiltinData</td><td>Raw on-chain Plutus data format</td></tr>
+<tr><td>ScriptContext</td><td>Info about the spending transaction</td></tr>
+<tr><td>POSIXTime</td><td>Timestamp format used in Cardano</td></tr>
+<tr><td>CurrencySymbol</td><td>Identifier for a token policy</td></tr>
+<tr><td>TokenName</td><td>Name of a token under a policy</td></tr>
+<tr><td>txSignedBy</td><td>Checks if a PubKeyHash signed the transaction</td></tr>
+</table>
+
+</body>
+</html>
